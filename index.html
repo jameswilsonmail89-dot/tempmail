@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Temp Mail - Free Disposable Email Address</title>
+<meta name="description" content="Get a free temporary email address instantly. No signup. Receive emails and verification codes, then throw the address away.">
+<style>
+:root{
+  --bg:#f3f6fb; --surface:#ffffff; --text:#14213d; --muted:#5b6b86;
+  --line:#d9e1ee; --accent:#1f6feb; --accent-text:#ffffff; --ok:#12805c;
+}
+@media (prefers-color-scheme: dark){
+  :root{--bg:#0e1626; --surface:#162238; --text:#e8eefb; --muted:#9aabc7;
+        --line:#26364f; --accent:#5b9dff; --accent-text:#0a1426; --ok:#4fd1a1;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font-family:"Trebuchet MS","Segoe UI",Tahoma,sans-serif;line-height:1.5}
+.wrap{max-width:760px;margin:0 auto;padding:24px 16px 48px}
+header h1{font-size:1.9rem;margin:8px 0 4px}
+header p{margin:0 0 20px;color:var(--muted)}
+.box{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.addr{display:flex;gap:8px;flex-wrap:wrap}
+.addr input{flex:1 1 240px;min-width:0;padding:12px;font-size:1.05rem;border:1px solid var(--line);
+  border-radius:8px;background:var(--bg);color:var(--text)}
+button,.btn{padding:12px 16px;font-size:1rem;border:1px solid var(--line);border-radius:8px;
+  background:var(--surface);color:var(--text);cursor:pointer;text-decoration:none;display:inline-block}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-text);font-weight:bold}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.status{margin-top:10px;font-size:.9rem;color:var(--muted)}
+.sponsor{display:block;text-align:center;border-style:dashed;color:var(--text);text-decoration:none}
+.sponsor small{display:block;color:var(--muted)}
+.inbox-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.inbox-head h2{font-size:1.15rem;margin:0}
+.msg{padding:12px;border-top:1px solid var(--line);cursor:pointer}
+.msg:first-child{border-top:0}
+.msg:hover{background:var(--bg)}
+.msg b{display:block}
+.msg span{color:var(--muted);font-size:.85rem}
+.empty{color:var(--muted);text-align:center;padding:28px 8px}
+#viewer{display:none}
+#viewer pre{white-space:pre-wrap;word-break:break-word;font-family:inherit;margin:12px 0 0}
+#viewer .meta{color:var(--muted);font-size:.9rem}
+footer{color:var(--muted);font-size:.85rem;text-align:center;margin-top:24px}
+footer a{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Temp Mail</h1>
+    <p>A free disposable email address. No signup needed.</p>
+  </header>
+
+  <section class="box" aria-label="Your temporary email address">
+    <div class="addr">
+      <input id="address" type="text" readonly value="Creating your address..." aria-label="Your temporary email address">
+      <button id="copy" class="primary">Copy</button>
+      <button id="renew">New address</button>
+    </div>
+    <div class="status" id="status">Setting up...</div>
+  </section>
+
+  <!-- SPONSORED SLOT 1: replace YOUR_ADSTERRA_SMARTLINK below with your real Smart Link -->
+  <a class="box sponsor" href="YOUR_ADSTERRA_SMARTLINK" target="_blank" rel="noopener sponsored">
+    Sponsored: check out this recommended offer
+    <small>Ad</small>
+  </a>
+
+  <section class="box" aria-label="Inbox">
+    <div class="inbox-head">
+      <h2>Inbox</h2>
+      <button id="refresh">Refresh</button>
+    </div>
+    <div id="list"><div class="empty">Waiting for emails. This page checks every 10 seconds.</div></div>
+  </section>
+
+  <section class="box" id="viewer" aria-label="Message">
+    <button id="back">Back to inbox</button>
+    <h2 id="vsubject"></h2>
+    <div class="meta" id="vmeta"></div>
+    <pre id="vbody"></pre>
+  </section>
+
+  <footer>
+    <p>Inboxes are public and temporary. Do not use this for banking or sensitive accounts.</p>
+    <p><a href="#" onclick="alert('Add your Privacy Policy page here.');return false;">Privacy Policy</a></p>
+  </footer>
+</div>
+
+<script>
+const API = "https://api.mail.tm";
+let token = null, timer = null, seen = new Set();
+
+const $ = id => document.getElementById(id);
+function api(path, opts = {}){
+  opts.headers = Object.assign({"Accept":"application/ld+json"}, opts.headers || {});
+  return fetch(API + path, opts);
+}
+const members = d => d["hydra:member"] || d.member || [];
+const setStatus = t => $("status").textContent = t;
+
+function rand(n){
+  const c = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let s = ""; for(let i=0;i<n;i++) s += c[Math.floor(Math.random()*c.length)];
+  return s;
+}
+function esc(s){
+  return String(s ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+}
+
+async function createAddress(){
+  clearInterval(timer);
+  seen.clear(); token = null;
+  $("address").value = "Creating your address...";
+  $("list").innerHTML = '<div class="empty">Waiting for emails. This page checks every 10 seconds.</div>';
+  closeViewer();
+  setStatus("Setting up...");
+  try{
+    const dr = await api("/domains");
+    if(!dr.ok) throw new Error("domains HTTP " + dr.status);
+    const d = await dr.json();
+    const list = members(d);
+    if(!list.length) throw new Error("no domains returned");
+    const domain = list[0].domain;
+    const address = rand(10) + "@" + domain;
+    const password = rand(16);
+    const r = await api("/accounts", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({address, password})
+    });
+    if(!r.ok) throw new Error("account HTTP " + r.status);
+    const t = await (await api("/token", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({address, password})
+    })).json();
+    token = t.token;
+    $("address").value = address;
+    localStorage.setItem("tm_session", JSON.stringify({address, token}));
+    setStatus("Ready. Use this address to sign up, then wait for the email here.");
+    timer = setInterval(loadInbox, 10000);
+  }catch(e){
+    $("address").value = "Could not create address";
+    setStatus("Error: " + (e && e.message ? e.message : e) + ". Click New address to try again.");
+  }
+}
+
+async function loadInbox(){
+  if(!token) return;
+  try{
+    const r = await api("/messages", {headers:{Authorization:"Bearer " + token}});
+    const data = await r.json();
+    const msgs = members(data);
+    if(!msgs.length) return;
+    $("list").innerHTML = msgs.map(m => `
+      <div class="msg" data-id="${esc(m.id)}" tabindex="0">
+        <b>${esc(m.subject || "(no subject)")}</b>
+        <span>${esc(m.from && m.from.address)} - ${new Date(m.createdAt).toLocaleString()}</span>
+      </div>`).join("");
+  }catch(e){ setStatus("Could not refresh the inbox. Trying again soon."); }
+}
+
+async function openMessage(id){
+  try{
+    const r = await api("/messages/" + id, {headers:{Authorization:"Bearer " + token}});
+    const m = await r.json();
+    $("vsubject").textContent = m.subject || "(no subject)";
+    $("vmeta").textContent = "From: " + (m.from && m.from.address) + " | " + new Date(m.createdAt).toLocaleString();
+    $("vbody").textContent = m.text || "(This email has no plain-text content.)";
+    $("viewer").style.display = "block";
+    $("list").parentElement.style.display = "none";
+  }catch(e){ setStatus("Could not open that message."); }
+}
+function closeViewer(){
+  $("viewer").style.display = "none";
+  $("list").parentElement.style.display = "block";
+}
+
+$("list").addEventListener("click", e => {
+  const el = e.target.closest(".msg"); if(el) openMessage(el.dataset.id);
+});
+$("list").addEventListener("keydown", e => {
+  if(e.key === "Enter"){ const el = e.target.closest(".msg"); if(el) openMessage(el.dataset.id); }
+});
+$("back").onclick = closeViewer;
+$("refresh").onclick = loadInbox;
+$("renew").onclick = createAddress;
+$("copy").onclick = async () => {
+  try{ await navigator.clipboard.writeText($("address").value); setStatus("Address copied."); }
+  catch(e){ $("address").select(); setStatus("Press Ctrl+C to copy."); }
+};
+
+createAddress();
+</script>
+</body>
+</html>
